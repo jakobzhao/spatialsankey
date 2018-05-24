@@ -1,3 +1,6 @@
+// modified by Bo Zhao to support D3 v4 and v5.
+// updated date: 5/24/2018
+// Organization: Oregon State University
 (function() {
 
 d3.spatialsankey = function() {
@@ -13,7 +16,14 @@ d3.spatialsankey = function() {
       remove_zero_nodes = true,
       version = '0.0.5';
 
-  // Get or set leaflet map instance
+
+	var getCentroid = function (arr) {
+		return arr.reduce(function (x,y) {
+			return [x[0] + y[0]/arr.length, x[1] + y[1]/arr.length]
+		}, [0,0])
+	}
+
+	// Get or set leaflet map instance
   spatialsankey.lmap = function(_) {
     if(!arguments.length) return map;
     map = _;
@@ -27,14 +37,14 @@ d3.spatialsankey = function() {
     // Reduce data to feature list
     if(nodes.features) nodes = nodes.features;
     // GeoJson uses lon/lat, leaflet uses lat/lon, so coordinates need to be reversed
-    nodes.forEach(function(d){d.geometry.coordinates.reverse();})
+     nodes.forEach(function(d){d.geometry.coordinates.reverse();})
     return spatialsankey;
   };
 
   // Get or set data for flow volumes (optional)
   spatialsankey.flows = function(_) {
     if (!arguments.length) return flows;
-    flows = _;    
+    flows = _;
     return spatialsankey;
   };
 
@@ -43,6 +53,7 @@ d3.spatialsankey = function() {
     // Calculate aggregate flow values for nodes
     nodes = nodes.map(function(node) {
       // Get all in and outflows to this node
+        node.id = parseInt(node.properties.id);
       var inflows = links.filter(function(link) { return link.target == node.id; });
       var outflows = links.filter(function(link) { return link.source == node.id; });
 
@@ -73,26 +84,29 @@ d3.spatialsankey = function() {
     // Match nodes to links
     links = links.map(function(link){
 
+
       // Get target and source features
-      var source_feature = nodes.filter(function(node) { return node.id == link.source; })[0],
-          target_feature = nodes.filter(function(node) { return node.id == link.target; })[0];
+      var source_feature = nodes.filter(function(node) { return parseInt(node.properties.id) == parseInt(link.source); })[0],
+          target_feature = nodes.filter(function(node) { return parseInt(node.properties.id) == parseInt(link.target); })[0];
 
       // If nodes were not found, return null
       if (!(source_feature && target_feature)) return null;
-      
-      // Set coordinates for source and target      
-      link.source_coords = source_feature.geometry.coordinates;
-      link.target_coords = target_feature.geometry.coordinates;
+
+
+
+	    // Set coordinates for source and target
+	    link.source_coords = getCentroid(source_feature.geometry.coordinates[0]);
+	    link.target_coords = getCentroid(target_feature.geometry.coordinates[0]);
 
       // If a flow for this link was specified, set flow value
       var flow = flows.filter(function(flow) { return flow.id == link.id; })[0];
       if (flow) {
         link.flow = flow.flow;
       }
-      
+
       // Make sure flow is a number
       link.flow = parseFloat(link.flow);
-    
+
       return link;
     });
 
@@ -102,7 +116,7 @@ d3.spatialsankey = function() {
     if(link_count != links.length){
       console.log('Dropped ' + (link_count - links.length) + ' links that could not be matched to a node.');
     }
-    
+
     // Calculate ranges for dynamic drawing
     spatialsankey.ranges();
 
@@ -111,7 +125,7 @@ d3.spatialsankey = function() {
 
   // Draw link element
   spatialsankey.link = function(options) {
-    
+
     // Link styles
     // x and y shifts for control points
     var sx = 0.4,
@@ -138,8 +152,9 @@ d3.spatialsankey = function() {
     // Define path drawing function
     var link = function(d) {
       // Set control point inputs
-      var source = map.latLngToLayerPoint(d.source_coords),
-          target = map.latLngToLayerPoint(d.target_coords),
+
+      var source = map.latLngToLayerPoint( new L.LatLng(d.source_coords[1], d.source_coords[0])),
+          target =  map.latLngToLayerPoint( new L.LatLng(d.target_coords[1], d.target_coords[0])),
           dx = source.x - target.x,
           dy = source.y - target.y;
 
@@ -171,9 +186,11 @@ d3.spatialsankey = function() {
           // Calculate width value based on flow range
           var diff = d.flow - link_flow_range.min,
               range = link_flow_range.max - link_flow_range.min;
-          return (width_range.max - width_range.min)*(diff/range) + width_range.min;
+
+          weight = (width_range.max - width_range.min)*(diff/range) + width_range.min;
+          return weight;
         };
-    
+
     // Get or set link width function
     link.width = function(_) {
       if (!arguments.length) return width;
@@ -192,7 +209,7 @@ d3.spatialsankey = function() {
     // Range for color coding according to flow size (set colors for single coloring)
     node_color_range = ["yellow", "red"];
     // Instantiate color scale function
-    var color = d3.scale.linear()
+    var color = d3.scaleSqrt()
                   .domain([0, 1])
                   .range(node_color_range);
 
@@ -208,21 +225,54 @@ d3.spatialsankey = function() {
     var node = {};
 
     // Node object properties
+	  node.geopath = function(d) {
+		  coords = d.geometry.coordinates;
+		  coords_screen = []
+		  for (var i = 0; i < coords[0].length; i ++) {
+			  var point = map.latLngToLayerPoint(new L.LatLng(d.geometry.coordinates[0][i][1], d.geometry.coordinates[0][i][0]));
+			  coords_screen.push([ point.x, point.y])
+		  }
+		  dtext = "M"
+		  for (var i = 0; i < coords_screen.length; i ++) {
+			  dtext += ( coords_screen[i][0] + "," + coords_screen[i][1] + "L");
+		  }
+		  dtext = dtext.substr(0, dtext.length -1 ) + "Z";
+		  return dtext
+
+	  };
+
     node.cx = function(d) {
-      cx = map.latLngToLayerPoint(d.geometry.coordinates).x;
+
+
+
+      // Set coordinates for source and target
+      coords = getCentroid(d.geometry.coordinates[0]);
+      cx = map.latLngToLayerPoint( new L.LatLng(coords[1], coords[0])).x;
+
+      // cx = map.latLngToLayerPoint(d.geometry.coordinates).x;
       if(!cx) return null;
       return cx;
+
     };
     node.cy = function(d) {
-      cy = map.latLngToLayerPoint(d.geometry.coordinates).y;
+
+
+      // Set coordinates for source and target
+      coords = getCentroid(d.geometry.coordinates[0]);
+      cy = map.latLngToLayerPoint( new L.LatLng(coords[1], coords[0])).y;
+
+      //cy = map.latLngToLayerPoint(d.geometry.coordinates).y;
       if(!cy) return null;
       return cy;
     };
+
     node.r = function(d) {
       if (d.properties.aggregate_outflows == 0) return 0;
       var diff = d.properties.aggregate_outflows - node_flow_range.min,
           range = node_flow_range.max - node_flow_range.min;
-      return (node_radius_range.max - node_radius_range.min)*(diff/range) + node_radius_range.min;
+      var radius = (node_radius_range.max - node_radius_range.min)*(diff/range) + node_radius_range.min;
+      // return Math.sqrt(radius);
+        return radius / 3.0;
     };
     node.color = function(_) {
       if (!arguments.length) return color;
@@ -233,9 +283,26 @@ d3.spatialsankey = function() {
       var diff = d.properties.aggregate_outflows - node_flow_range.min,
           range = node_flow_range.max - node_flow_range.min,
           load = diff/range;
-      return color(load);
+        return color(load);
+
     };
+
+	  node.display = function(d) {
+		  var diff = d.properties.aggregate_outflows - node_flow_range.min,
+			  range = node_flow_range.max - node_flow_range.min,
+			  load = diff/range;
+		  if (load >= 0) {
+			  return "block";
+		  } {
+			  return "none"
+		  }
+	  };
+
+
+
     return node;
+
+
   };
 
   return spatialsankey;

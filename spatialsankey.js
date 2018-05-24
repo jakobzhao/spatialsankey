@@ -14,7 +14,7 @@ d3.spatialsankey = function() {
       link_flow_range = {},
       remove_zero_links = true,
       remove_zero_nodes = true,
-      version = '0.0.5';
+      version = '0.1.0';
 
 
 	var getCentroid = function (arr) {
